@@ -4,7 +4,6 @@ package app.myspoti.api
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.emptyFlow
 
 /** What no music service of the app offers: the call has nothing to answer with. */
 class NotAvailable(what: String) : java.io.IOException("$what: not available")
@@ -17,6 +16,9 @@ class NotAvailable(what: String) : java.io.IOException("$what: not available")
  * empty here, and changing it fails with [NotAvailable].
  */
 class NeutralApi : MyspotiApi {
+    /** Orpheon local-library mod: Liked Songs and playlists kept on the phone ([LocalLibrary]). */
+    val local = LocalLibrary()
+
     private fun <T> none(offset: Int = 0) = Page<T>(emptyList(), offset, 0, null)
     private fun no(what: String): Nothing = throw NotAvailable(what)
 
@@ -76,35 +78,41 @@ class NeutralApi : MyspotiApi {
     }
 
     override val library: Library = object : Library {
-        override suspend fun contains(uris: List<Uri>): List<Boolean> = uris.map { false }
-        override suspend fun add(uris: List<Uri>) = no("library")
-        override suspend fun remove(uris: List<Uri>) = no("library")
-        override suspend fun items(filter: LibraryFilter, sort: LibrarySort, folderUri: Uri?, offset: Int, limit: Int) = none<LibraryItem>(offset)
-        override suspend fun likedTracks(offset: Int, limit: Int) = none<SavedTrack>(offset)
+        override suspend fun contains(uris: List<Uri>): List<Boolean> = uris.map { local.isSaved(it) }
+        override suspend fun add(uris: List<Uri>) = local.save(uris)
+        override suspend fun remove(uris: List<Uri>) = local.unsave(uris)
+        override suspend fun items(filter: LibraryFilter, sort: LibrarySort, folderUri: Uri?, offset: Int, limit: Int): Page<LibraryItem> {
+            if (folderUri != null || (filter != LibraryFilter.ALL && filter != LibraryFilter.PLAYLISTS)) return none(offset)
+            val all = local.items(sort)
+            val items = all.drop(offset).take(limit)
+            return Page(items, offset, all.size, (offset + items.size).takeIf { it < all.size && items.isNotEmpty() })
+        }
+        override suspend fun likedTracks(offset: Int, limit: Int) = local.liked(offset, limit)
         override suspend fun pin(uri: Uri) = no("library")
         override suspend fun unpin(uri: Uri) = no("library")
         override suspend fun createFolder(name: String, parentFolderUri: Uri?): Uri = no("library")
         override suspend fun renameFolder(folderUri: Uri, name: String) = no("library")
         override suspend fun deleteFolder(folderUri: Uri) = no("library")
         override suspend fun moveToFolder(uri: Uri, folderUri: Uri?) = no("library")
-        override val changes: Flow<Unit> = emptyFlow()
+        override val changes: Flow<Unit> = local.changes
     }
 
     override val playlists: Playlists = object : Playlists {
-        override suspend fun playlist(uri: Uri): Playlist = no(uri)
-        override suspend fun tracks(uri: Uri, offset: Int, limit: Int): Page<Track> = no(uri)
-        override suspend fun sortedTracks(uri: Uri, sort: PlaylistSort, descending: Boolean): List<Track> = no(uri)
-        override suspend fun mine(): List<Playlist> = emptyList()
-        override suspend fun editable(): List<Playlist> = emptyList()
-        override suspend fun create(name: String, folderUri: Uri?): Uri = no("playlists")
-        override suspend fun rename(uri: Uri, name: String) = no(uri)
-        override suspend fun setDescription(uri: Uri, description: String) = no(uri)
-        override suspend fun access(uri: Uri): PlaylistAccess = no(uri)
+        override suspend fun playlist(uri: Uri): Playlist = local.playlist(uri) ?: no(uri)
+        override suspend fun tracks(uri: Uri, offset: Int, limit: Int): Page<Track> = if (local.isLocalList(uri)) local.tracks(uri, offset, limit) else no(uri)
+        override suspend fun sortedTracks(uri: Uri, sort: PlaylistSort, descending: Boolean): List<Track> =
+            if (local.isLocalList(uri)) local.allTracks(uri).sortedFor(sort, descending) else no(uri)
+        override suspend fun mine(): List<Playlist> = local.playlists()
+        override suspend fun editable(): List<Playlist> = local.playlists()
+        override suspend fun create(name: String, folderUri: Uri?): Uri = local.create(name)
+        override suspend fun rename(uri: Uri, name: String) = if (local.isLocalList(uri)) local.rename(uri, name) else no(uri)
+        override suspend fun setDescription(uri: Uri, description: String) = if (local.isLocalList(uri)) local.setDescription(uri, description) else no(uri)
+        override suspend fun access(uri: Uri): PlaylistAccess = if (local.isLocalList(uri)) PlaylistAccess.PRIVATE else no(uri)
         override suspend fun setAccess(uri: Uri, access: PlaylistAccess) = no(uri)
         override suspend fun published(uri: Uri): Boolean = false
         override suspend fun setPublished(uri: Uri, published: Boolean) = no(uri)
         override suspend fun setCover(uri: Uri, jpeg: ByteArray?) = no(uri)
-        override suspend fun delete(uri: Uri) = no(uri)
+        override suspend fun delete(uri: Uri) = if (local.isLocalList(uri)) local.delete(uri) else no(uri)
         override suspend fun follow(uri: Uri) = no(uri)
         override suspend fun unfollow(uri: Uri) = no(uri)
         override suspend fun join(uri: Uri, invitationToken: String): PlaylistAccess = no(uri)
@@ -115,9 +123,9 @@ class NeutralApi : MyspotiApi {
         override suspend fun removeMember(uri: Uri, username: String) = no(uri)
         override suspend fun stopCollaboration(uri: Uri) = no(uri)
         override suspend fun addedBy(uri: Uri): List<RowAdder> = emptyList()
-        override suspend fun addTracks(uri: Uri, trackUris: List<Uri>) = no(uri)
-        override suspend fun removeTracks(uri: Uri, uids: List<String>) = no(uri)
-        override suspend fun moveTracks(uri: Uri, uids: List<String>, beforeUid: String?) = no(uri)
+        override suspend fun addTracks(uri: Uri, trackUris: List<Uri>) = if (local.isLocalList(uri)) local.addTracks(uri, trackUris) else no(uri)
+        override suspend fun removeTracks(uri: Uri, uids: List<String>) = if (local.isLocalList(uri)) local.removeTracks(uri, uids) else no(uri)
+        override suspend fun moveTracks(uri: Uri, uids: List<String>, beforeUid: String?) = if (local.isLocalList(uri)) local.moveTracks(uri, uids, beforeUid) else no(uri)
         override suspend fun recommended(uri: Uri, limit: Int, skip: List<Uri>): List<Track> = emptyList()
     }
 
