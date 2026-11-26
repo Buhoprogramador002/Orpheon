@@ -79,7 +79,7 @@ object SpotifySync {
         scope.launch {
             val ok = runCatching {
                 val uri = "spotify:playlist:$playlistId"
-                val uid = rowUid.ifBlank { allTracks(uri).firstOrNull { it.uri == "spotify:track:$trackId" }?.uid }
+                val uid = rowUid.ifBlank { allTracks(uri).firstOrNull { isTrack(it, trackId) }?.uid }
                 checkNotNull(uid) { "track not in playlist" }
                 api.playlists.removeTracks(uri, listOf(uid))
             }.onFailure { Log.w(TAG, "remove row $rowUid ($trackId) from $playlistId failed: ${it.message}") }.isSuccess
@@ -98,7 +98,7 @@ object SpotifySync {
         scope.launch {
             val ok = runCatching {
                 val uri = "spotify:playlist:$playlistId"
-                val uids = allTracks(uri).filter { it.uri == "spotify:track:$trackId" }.mapNotNull { it.uid }
+                val uids = allTracks(uri).filter { isTrack(it, trackId) }.mapNotNull { it.uid }
                 check(uids.isNotEmpty()) { "track not in playlist" }
                 api.playlists.removeTracks(uri, uids)
             }.onFailure { Log.w(TAG, "remove $trackId from $playlistId failed: ${it.message}") }.isSuccess
@@ -176,6 +176,12 @@ object SpotifySync {
         }, onDone = { ok -> onDone(ok && trackAdded) })
     }
 
+    /** A row's track id as the app names songs: a catalog song by its catalog key ("deezer.123"). */
+    private fun idOf(t: app.myspoti.api.Track): String =
+        com.music.spotui.data.catalog.CatalogRuntime.keyOf(t.uri) ?: t.uri.substringAfterLast(':')
+
+    private fun isTrack(t: app.myspoti.api.Track, trackId: String) = t.uri == "spotify:track:$trackId" || idOf(t) == trackId
+
     private suspend fun allTracks(uri: String): List<app.myspoti.api.Track> {
         val out = ArrayList<app.myspoti.api.Track>()
         var offset = 0
@@ -193,7 +199,7 @@ object SpotifySync {
     /** Track ids contained in [playlistId] (first call fetches, then cached). */
     suspend fun playlistTrackIds(context: Context, playlistId: String): Set<String> {
         membershipCache[playlistId]?.let { return it }
-        val ids = runCatching { allTracks("spotify:playlist:$playlistId").map { it.uri.substringAfterLast(':') } }.getOrNull() ?: return emptySet()
+        val ids = runCatching { allTracks("spotify:playlist:$playlistId").map { idOf(it) } }.getOrNull() ?: return emptySet()
         val set = ConcurrentHashMap.newKeySet<String>().apply { addAll(ids) }
         membershipCache[playlistId] = set
         return set
