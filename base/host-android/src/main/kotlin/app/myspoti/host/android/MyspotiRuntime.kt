@@ -46,6 +46,9 @@ object MyspotiRuntime {
     fun start(context: Context) {
         if (isStarted) return
         isStarted = true
+        // Orpheon local-library mod: Liked Songs and playlists kept on the phone, song details from the catalog.
+        neutral.local.trackLookup = { uri -> api.catalog.track(uri) }
+        neutral.local.attach(java.io.File(context.applicationContext.filesDir, "orpheon_local_library.txt"))
         AudioModeWatch.install(context.applicationContext)
     }
 }
